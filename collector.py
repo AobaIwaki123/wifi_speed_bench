@@ -99,5 +99,14 @@ def append_log(record, log_path):
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def switch_ssid(ssid, interface="en0", wait_sec=0):
-    pass
+def switch_ssid(ssid, interface="en0", wait_sec=DEFAULT_INTERVAL):
+    try:
+        result = subprocess.run(
+            ["networksetup", "-setairportnetwork", interface, ssid],
+            capture_output=True, text=True
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"networksetup not found: {e}") from e
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to switch SSID to '{ssid}': {result.stdout.strip()}")
+    time.sleep(wait_sec)
