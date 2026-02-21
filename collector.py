@@ -27,7 +27,10 @@ def parse_args(argv=None):
         "--count", type=int, default=DEFAULT_COUNT, help="1SSIDあたりの計測回数"
     )
     parser.add_argument(
-        "--interval", type=int, default=DEFAULT_INTERVAL, help="SSID切り替え後の安定待機秒数"
+        "--interval",
+        type=int,
+        default=DEFAULT_INTERVAL,
+        help="SSID切り替え後の安定待機秒数",
     )
     return parser.parse_args(argv)
 
@@ -35,7 +38,8 @@ def parse_args(argv=None):
 def get_current_ssid(interface="en0"):
     result = subprocess.run(
         ["networksetup", "-getairportnetwork", interface],
-        capture_output=True, text=True
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"networksetup failed: {result.stdout.strip()}")
@@ -43,15 +47,13 @@ def get_current_ssid(interface="en0"):
     prefix = "Current Wi-Fi Network: "
     if not output.startswith(prefix):
         raise RuntimeError(f"Not associated with any network: {output}")
-    return output[len(prefix):]
+    return output[len(prefix) :]
 
 
 def get_physical_metrics():
     import re
-    result = subprocess.run(
-        [AIRPORT_CMD, "-I"],
-        capture_output=True, text=True
-    )
+
+    result = subprocess.run([AIRPORT_CMD, "-I"], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"airport command failed: {result.stdout.strip()}")
     output = result.stdout
@@ -61,8 +63,8 @@ def get_physical_metrics():
         return int(m.group(1)) if m else None
 
     return {
-        "rssi":      _parse(r"agrCtlRSSI:\s*(-?\d+)"),
-        "noise":     _parse(r"agrCtlNoise:\s*(-?\d+)"),
+        "rssi": _parse(r"agrCtlRSSI:\s*(-?\d+)"),
+        "noise": _parse(r"agrCtlNoise:\s*(-?\d+)"),
         "mcs_index": _parse(r"\bMCS:\s*(\d+)"),
     }
 
@@ -78,8 +80,8 @@ def run_speedtest():
         raise RuntimeError(f"speedtest failed: {e}") from e
     return {
         "download_mbps": round(result["download"] / 1_000_000, 1),
-        "upload_mbps":   round(result["upload"]   / 1_000_000, 1),
-        "ping_ms":       result["ping"],
+        "upload_mbps": round(result["upload"] / 1_000_000, 1),
+        "ping_ms": result["ping"],
     }
 
 
@@ -103,10 +105,57 @@ def switch_ssid(ssid, interface="en0", wait_sec=DEFAULT_INTERVAL):
     try:
         result = subprocess.run(
             ["networksetup", "-setairportnetwork", interface, ssid],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
     except FileNotFoundError as e:
         raise RuntimeError(f"networksetup not found: {e}") from e
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to switch SSID to '{ssid}': {result.stdout.strip()}")
+        raise RuntimeError(
+            f"Failed to switch SSID to '{ssid}': {result.stdout.strip()}"
+        )
     time.sleep(wait_sec)
+
+
+DEFAULT_LOG_PATH = Path("logs/benchmark.jsonl")
+
+
+def main():
+    args = parse_args()
+    log_path = DEFAULT_LOG_PATH
+
+    total = len(args.ssids) * args.count
+    done = 0
+
+    for ssid in args.ssids:
+        print(f"\n[→] Switching to SSID: {ssid}")
+        try:
+            switch_ssid(ssid, wait_sec=args.interval)
+        except RuntimeError as e:
+            print(f"[ERROR] SSID切り替え失敗、スキップします: {e}")
+            continue
+
+        for i in range(1, args.count + 1):
+            done += 1
+            print(f"[{ssid}  {i}/{args.count}] 計測中... ({done}/{total})")
+            try:
+                physical = get_physical_metrics()
+                speed    = run_speedtest()
+                actual_ssid = get_current_ssid()
+                record   = build_record(actual_ssid, physical, speed)
+                append_log(record, log_path)
+                print(
+                    f"  RSSI:{physical['rssi']} dBm  "
+                    f"MCS:{physical['mcs_index']}  "
+                    f"↓{speed['download_mbps']} Mbps  "
+                    f"↑{speed['upload_mbps']} Mbps  "
+                    f"ping:{speed['ping_ms']} ms"
+                )
+            except RuntimeError as e:
+                print(f"  [WARN] 計測失敗、スキップします: {e}")
+
+    print(f"\n[✓] 完了 — ログ: {log_path.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
