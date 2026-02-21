@@ -6,14 +6,14 @@
 
 ## collector.py - モジュール構成
 
-| 関数                                                  | 役割                                                       |
-| ----------------------------------------------------- | ---------------------------------------------------------- |
-| `parse_args(argv)`                                    | CLIの引数を解析して返す                                    |
+| 関数                                                  | 役割                                                                        |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| `parse_args(argv)`                                    | CLIの引数を解析して返す                                                     |
 | `get_physical_metrics()`                              | 物理層メトリクス（RSSI / Noise / MCS / Channel / Band）を取得して辞書で返す |
-| `run_speedtest()`                                     | speedtestを実行し、速度・pingを辞書で返す                  |
-| `build_record(ssid, physical_metrics, speed_metrics)` | 1件分のJSONLレコード（辞書）を構築して返す                 |
-| `append_log(record, log_path)`                        | レコードをJSONL形式でファイルに追記する                    |
-| `switch_ssid(ssid, interface, wait_sec)`              | SSIDを切り替え、安定待機する                               |
+| `run_speedtest()`                                     | speedtestを実行し、速度・pingを辞書で返す                                   |
+| `build_record(ssid, physical_metrics, speed_metrics)` | 1件分のJSONLレコード（辞書）を構築して返す                                  |
+| `append_log(record, log_path)`                        | レコードをJSONL形式でファイルに追記する                                     |
+| `switch_ssid(ssid, interface, wait_sec)`              | SSIDを切り替え、安定待機する                                                |
 
 ---
 
@@ -34,13 +34,13 @@ python collector.py --ssids <SSID1> [SSID2 ...] [--count N] [--interval SEC]
 ## データ仕様
 
 ### 物理層メトリクス
-| フィールド | 取得元 | 備考 |
-|---|---|---|
-| `rssi` | `Signal / Noise` の前半値 (dBm) | 負の整数 |
-| `noise` | `Signal / Noise` の後半値 (dBm) | 負の整数 |
-| `mcs_index` | `MCS Index` | 0以上の整数 |
-| `channel` | `Channel` | チャンネル番号（正の整数） |
-| `band` | `Channel` の括弧内 | `"2.4GHz"` / `"5GHz"` / `"6GHz"` |
+| フィールド  | 取得元                          | 備考                             |
+| ----------- | ------------------------------- | -------------------------------- |
+| `rssi`      | `Signal / Noise` の前半値 (dBm) | 負の整数                         |
+| `noise`     | `Signal / Noise` の後半値 (dBm) | 負の整数                         |
+| `mcs_index` | `MCS Index`                     | 0以上の整数                      |
+| `channel`   | `Channel`                       | チャンネル番号（正の整数）       |
+| `band`      | `Channel` の括弧内              | `"2.4GHz"` / `"5GHz"` / `"6GHz"` |
 
 > **Note**: macOS 14以降、Location Services の制限によりSSIDはredactされるため取得不可。
 > `main()` はCLI引数で指定したSSID文字列をそのままログの `ssid` フィールドに記録する。

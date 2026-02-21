@@ -11,6 +11,7 @@
     - Wi-Fi に接続した状態で実行すること
     - TestRunSpeedtestIntegration は実際に外部通信を行うため時間がかかる（~30秒）
 """
+
 import pytest
 
 import collector
@@ -43,25 +44,33 @@ class TestGetPhysicalMetricsIntegration:
         """Noiseは通常負の値（dBm）であることを確認する"""
         result = collector.get_physical_metrics()
         if result["noise"] is not None:
-            assert result["noise"] < 0, f"Noise should be negative, got {result['noise']}"
+            assert result["noise"] < 0, (
+                f"Noise should be negative, got {result['noise']}"
+            )
 
     def test_get_physical_metrics_mcs_index_is_non_negative(self):
         """MCS Indexは0以上の整数であることを確認する"""
         result = collector.get_physical_metrics()
         if result["mcs_index"] is not None:
-            assert result["mcs_index"] >= 0, f"MCS Index should be >= 0, got {result['mcs_index']}"
+            assert result["mcs_index"] >= 0, (
+                f"MCS Index should be >= 0, got {result['mcs_index']}"
+            )
 
     def test_get_physical_metrics_channel_is_positive(self):
         """チャンネル番号が正の整数であることを確認する"""
         result = collector.get_physical_metrics()
         if result["channel"] is not None:
-            assert result["channel"] > 0, f"Channel should be > 0, got {result['channel']}"
+            assert result["channel"] > 0, (
+                f"Channel should be > 0, got {result['channel']}"
+            )
 
     def test_get_physical_metrics_band_is_valid(self):
         """帯域が既知の値（2.4GHz/5GHz/6GHz）であることを確認する"""
         result = collector.get_physical_metrics()
         if result["band"] is not None:
-            assert result["band"] in {"2.4GHz", "5GHz", "6GHz"}, f"Unknown band: {result['band']}"
+            assert result["band"] in {"2.4GHz", "5GHz", "6GHz"}, (
+                f"Unknown band: {result['band']}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -83,4 +92,3 @@ class TestRunSpeedtestIntegration:
         """実際のspeedtestが必須キーを返すことを確認する"""
         result = collector.run_speedtest()
         assert {"download_mbps", "upload_mbps", "ping_ms"} <= result.keys()
-

@@ -45,20 +45,34 @@ def get_physical_metrics():
         return int(m.group(1)) if m else None
 
     # Signal / Noise: -57 dBm / -101 dBm
-    rssi  = _parse_int(r"Signal / Noise:\s*(-?\d+)\s*dBm")
+    rssi = _parse_int(r"Signal / Noise:\s*(-?\d+)\s*dBm")
     noise = _parse_int(r"Signal / Noise:\s*-?\d+\s*dBm\s*/\s*(-?\d+)\s*dBm")
-    mcs   = _parse_int(r"MCS Index:\s*(\d+)")
+    mcs = _parse_int(r"MCS Index:\s*(\d+)")
 
     # Channel: 140 (5GHz, 20MHz)
     ch_m = re.search(r"Channel:\s*(\d+)\s*\(([^,)]+)", output)
     channel = int(ch_m.group(1)) if ch_m else None
     if ch_m:
         freq = ch_m.group(2)  # "5GHz" / "2GHz" / "6GHz"
-        band = "6GHz" if "6GHz" in freq else "5GHz" if "5GHz" in freq else "2.4GHz" if "2GHz" in freq else None
+        band = (
+            "6GHz"
+            if "6GHz" in freq
+            else "5GHz"
+            if "5GHz" in freq
+            else "2.4GHz"
+            if "2GHz" in freq
+            else None
+        )
     else:
         band = None
 
-    return {"rssi": rssi, "noise": noise, "mcs_index": mcs, "channel": channel, "band": band}
+    return {
+        "rssi": rssi,
+        "noise": noise,
+        "mcs_index": mcs,
+        "channel": channel,
+        "band": band,
+    }
 
 
 def run_speedtest():
