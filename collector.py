@@ -47,7 +47,24 @@ def get_current_ssid(interface="en0"):
 
 
 def get_physical_metrics():
-    pass
+    import re
+    result = subprocess.run(
+        [AIRPORT_CMD, "-I"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"airport command failed: {result.stdout.strip()}")
+    output = result.stdout
+
+    def _parse(pattern):
+        m = re.search(pattern, output)
+        return int(m.group(1)) if m else None
+
+    return {
+        "rssi":      _parse(r"agrCtlRSSI:\s*(-?\d+)"),
+        "noise":     _parse(r"agrCtlNoise:\s*(-?\d+)"),
+        "mcs_index": _parse(r"\bMCS:\s*(\d+)"),
+    }
 
 
 def run_speedtest():
