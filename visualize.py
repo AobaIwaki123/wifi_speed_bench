@@ -53,7 +53,11 @@ PALETTE = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2", "#937860"]
 
 # ── データ読み込み ────────────────────────────────────────────────────────────
 def load_log(log_path: Path) -> pd.DataFrame:
-    """JSONL ログを読み込み DataFrame を返す。"""
+    """JSONL ログを読み込み DataFrame を返す。
+
+    ``run_id`` フィールドを持たない旧形式レコードは、連続するタイムスタンプの
+    差が 5 分を超えた境界を「実行の切れ目」として合成 run_id を付与する。
+    """
     if not log_path.exists():
         print(f"[ERROR] ログファイルが見つかりません: {log_path}", file=sys.stderr)
         sys.exit(1)
@@ -72,6 +76,32 @@ def load_log(log_path: Path) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # run_id が無い（旧形式）レコードに合成 run_id を付与する
+    if "run_id" not in df.columns:
+        df["run_id"] = pd.NA  # type: ignore[call-arg]
+
+    RUN_GAP_SEC = 300  # 5 分以上の間隔を「別の実行」と判定
+    prev_ts = None
+    synthetic_id: str | None = None
+    run_ids: list[str] = []
+    for _, row in df.iterrows():
+        existing = row["run_id"]
+        if pd.notna(existing) and str(existing).strip():
+            run_ids.append(str(existing))
+            prev_ts = row["timestamp"]
+            synthetic_id = None
+            continue
+        # --- 旧形式レコード ---
+        ts = row["timestamp"]
+        if prev_ts is None or (ts - prev_ts).total_seconds() > RUN_GAP_SEC:
+            # 旧形式ログのタイムスタンプを UTC→JST (+9h) に変換して ID 生成
+            jst_ts = ts.tz_convert("Asia/Tokyo") if ts.tzinfo else ts
+            synthetic_id = "LEGACY_" + jst_ts.strftime("%Y%m%d_%H%M%S")
+        run_ids.append(synthetic_id)  # type: ignore[arg-type]
+        prev_ts = ts
+
+    df["run_id"] = run_ids
     return df
 
 
@@ -298,47 +328,84 @@ def plot_heatmap(df: pd.DataFrame, out_dir: Path) -> None:
 
 # ── JSON エクスポート ────────────────────────────────────────────────────────
 def export_stats_json(df: pd.DataFrame, out_dir: Path) -> dict:
-    """集計済み統計 + 時系列データを stats.json に書き出し、dict を返す。"""
-    num_cols = ["download_mbps", "upload_mbps", "ping_ms", "rssi", "noise", "mcs_index"]
-    corr = df[num_cols].corr()
+    """実行ID別に集計済み統計 + 時系列データを stats.json に書き出し、dict を返す。
 
-    stats: dict = {}
-    for ssid, grp in df.groupby("ssid"):
-        entry: dict = {"band": grp["band"].iloc[0], "count": int(len(grp))}
-        for col in num_cols:
-            v = grp[col].dropna()
-            entry[col] = {
-                "avg": round(float(v.mean()), 2),
-                "min": round(float(v.min()), 2),
-                "max": round(float(v.max()), 2),
-                "std": round(float(v.std()), 2),
-                "values": [round(float(x), 2) for x in v],
-            }
-        stats[ssid] = entry
-
-    time_series = [
+    戻り値:
         {
-            "timestamp": row["timestamp"].isoformat(),
-            "ssid": row["ssid"],
-            **{c: round(float(row[c]), 2) for c in num_cols if pd.notna(row[c])},
+          "generated_at": <ISO文字列>,
+          "runs": [
+            {
+              "run_id": "RUN_20260222_021254",
+              "total_records": 9,
+              "period": {"start": ..., "end": ...},
+              "ssids": [...],
+              "stats": { <ssid>: { "band", "count", <metric>: {avg,min,max,std,values} } },
+              "time_series": [...],
+              "correlation": {"fields": [...], "matrix": [[...]]}
+            },
+            ...  # 新しい順
+          ]
         }
-        for _, row in df.iterrows()
-    ]
+    """
+    num_cols = ["download_mbps", "upload_mbps", "ping_ms", "rssi", "noise", "mcs_index"]
+
+    runs: list[dict] = []
+    # run_id の登場順を保持してグループ化
+    for run_id in df["run_id"].unique():
+        run_df = (
+            df[df["run_id"] == run_id].sort_values("timestamp").reset_index(drop=True)
+        )
+        corr = run_df[num_cols].corr()
+
+        stats: dict = {}
+        for ssid, grp in run_df.groupby("ssid"):
+            entry: dict = {"band": grp["band"].iloc[0], "count": int(len(grp))}
+            for col in num_cols:
+                v = grp[col].dropna()
+                entry[col] = {
+                    "avg": round(float(v.mean()), 2),
+                    "min": round(float(v.min()), 2),
+                    "max": round(float(v.max()), 2),
+                    "std": round(float(v.std()), 2),
+                    "values": [round(float(x), 2) for x in v],
+                }
+            stats[ssid] = entry
+
+        time_series = [
+            {
+                "timestamp": row["timestamp"].isoformat(),
+                "ssid": row["ssid"],
+                **{c: round(float(row[c]), 2) for c in num_cols if pd.notna(row[c])},
+            }
+            for _, row in run_df.iterrows()
+        ]
+
+        runs.append(
+            {
+                "run_id": run_id,
+                "total_records": int(len(run_df)),
+                "period": {
+                    "start": run_df["timestamp"].min().isoformat(),
+                    "end": run_df["timestamp"].max().isoformat(),
+                },
+                "ssids": sorted(run_df["ssid"].unique().tolist()),
+                "stats": stats,
+                "time_series": time_series,
+                "correlation": {
+                    "fields": num_cols,
+                    "matrix": [
+                        [round(float(v), 3) for v in row] for row in corr.values
+                    ],
+                },
+            }
+        )
+
+    # 新しい実行を先頭に並べる
+    runs.sort(key=lambda r: r["period"]["start"], reverse=True)
 
     data = {
         "generated_at": pd.Timestamp.now(tz=timezone.utc).isoformat(),
-        "total_records": int(len(df)),
-        "period": {
-            "start": df["timestamp"].min().isoformat(),
-            "end": df["timestamp"].max().isoformat(),
-        },
-        "ssids": sorted(df["ssid"].unique().tolist()),
-        "stats": stats,
-        "time_series": time_series,
-        "correlation": {
-            "fields": num_cols,
-            "matrix": [[round(float(v), 3) for v in row] for row in corr.values],
-        },
+        "runs": runs,
     }
 
     out = out_dir / "stats.json"
@@ -357,53 +424,15 @@ _CHART_COLORS = [
 
 
 def export_dashboard(data: dict, out_dir: Path) -> None:
-    """JSON データを埋め込んだ自己完結 HTML ダッシュボードを生成する。"""
-    ssids = data["ssids"]
-    stats = data["stats"]
-    corr = data["correlation"]
+    """JSON データを埋め込んだ自己完結 HTML ダッシュボードを生成する。
 
-    # ── KPI cards (f-string: Python変数のみ、JS {} なし) ─────────────────────
-    kpi_cards_html = ""
-    for i, ssid in enumerate(ssids):
-        _, hex_color = _CHART_COLORS[i % len(_CHART_COLORS)]
-        s = stats[ssid]
-        kpi_cards_html += (
-            f'<div class="card kpi-card" style="border-top:4px solid {hex_color}">'
-            f'<div class="kpi-ssid" style="color:{hex_color}">{ssid}</div>'
-            f'<div class="kpi-band">{s["band"]} &middot; {s["count"]} samples</div>'
-            '<div class="kpi-grid">'
-            f'<div class="kpi-item"><div class="kpi-val">{s["download_mbps"]["avg"]}</div>'
-            '<div class="kpi-label">\u2193 Mbps</div></div>'
-            f'<div class="kpi-item"><div class="kpi-val">{s["upload_mbps"]["avg"]}</div>'
-            '<div class="kpi-label">\u2191 Mbps</div></div>'
-            f'<div class="kpi-item"><div class="kpi-val">{s["ping_ms"]["avg"]}</div>'
-            '<div class="kpi-label">Ping ms</div></div>'
-            f'<div class="kpi-item"><div class="kpi-val">{s["rssi"]["avg"]}</div>'
-            '<div class="kpi-label">RSSI dBm</div></div>'
-            "</div></div>"
-        )
-
-    # ── 相関テーブル ──────────────────────────────────────────────────────────
-    corr_fields_short = ["DL", "UL", "Ping", "RSSI", "Noise", "MCS"]
-    corr_header = "".join(f"<th>{f}</th>" for f in corr_fields_short)
-    corr_rows_html = ""
-    for row_vals, label in zip(corr["matrix"], corr_fields_short):
-        cells = "".join(
-            '<td style="background:'
-            + _corr_cell_color(v)
-            + ";color:"
-            + ("#fff" if abs(v) > 0.6 else "#1e293b")
-            + f'">{v:.2f}</td>'
-            for v in row_vals
-        )
-        corr_rows_html += f"<tr><th>{label}</th>{cells}</tr>"
-
-    # ── Python 側で計算した値を JSON として JS に渡す ──────────────────────────
+    ホーム画面（実行ID一覧）と実行別詳細ダッシュボードを持つ SPA として生成する。
+    """
     json_blob = json.dumps(data, ensure_ascii=False)
     colors_json = json.dumps([c[1] for c in _CHART_COLORS])
     colors_a_json = json.dumps([f"rgba({c[0]},0.18)" for c in _CHART_COLORS])
 
-    # ── CSS: 通常文字列 (f-string 不使用) ─────────────────────────────────────
+    # ── CSS ─────────────────────────────────────────────────────────────────
     css = (
         "*,::before,::after{box-sizing:border-box;margin:0;padding:0}"
         "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
@@ -413,7 +442,26 @@ def export_dashboard(data: dict, out_dir: Path) -> None:
         "box-shadow:0 1px 4px rgba(0,0,0,.06)}"
         "header h1{font-size:18px;font-weight:700;letter-spacing:-.3px}"
         "header .meta{margin-left:auto;font-size:12px;color:#64748b}"
+        ".back-btn{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;"
+        "padding:5px 14px;font-size:13px;cursor:pointer;color:#475569;display:none}"
+        ".back-btn:hover{background:#e2e8f0}"
         ".container{max-width:1280px;margin:0 auto;padding:24px 20px;display:grid;gap:20px}"
+        ".section-title{font-size:13px;font-weight:600;color:#475569;"
+        "text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}"
+        # ── ホーム ─────────────────────────────────────────────────────────
+        ".run-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}"
+        ".run-card{background:#fff;border-radius:12px;padding:20px;"
+        "box-shadow:0 1px 6px rgba(0,0,0,.07);cursor:pointer;"
+        "transition:box-shadow .15s,transform .1s;border-left:4px solid #6366f1}"
+        ".run-card:hover{box-shadow:0 4px 18px rgba(99,102,241,.22);transform:translateY(-2px)}"
+        ".run-id-label{font-size:14px;font-weight:700;color:#6366f1;"
+        "font-family:ui-monospace,monospace;margin-bottom:6px;word-break:break-all}"
+        ".run-period{font-size:12px;color:#64748b;margin-bottom:10px}"
+        ".ssid-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}"
+        ".ssid-tag{background:#ede9fe;color:#5b21b6;padding:2px 8px;"
+        "border-radius:999px;font-size:11px;font-weight:600}"
+        ".run-count{font-size:12px;color:#94a3b8}"
+        # ── 詳細 ───────────────────────────────────────────────────────────
         ".kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}"
         ".card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 6px rgba(0,0,0,.07)}"
         ".card-title{font-size:13px;font-weight:600;color:#475569;"
@@ -433,87 +481,167 @@ def export_dashboard(data: dict, out_dir: Path) -> None:
         "table.corr td{padding:6px 8px;text-align:center;border:1px solid #e2e8f0}"
     )
 
-    # ── JS: 通常文字列 (f-string 不使用、プレースホルダ埋め込み後置換) ──────────
+    # ── JS (SPA) ─────────────────────────────────────────────────────────────
     js = r"""
 (function() {
   const D = /*@JSON@*/null;
-  const ssids = D.ssids;
   const COLORS   = /*@COLORS@*/null;
   const COLORS_A = /*@COLORS_A@*/null;
 
-  document.getElementById('meta').textContent =
-    `${D.total_records} records \u00b7 ${D.period.start.slice(0,10)} \u2192 ${D.period.end.slice(0,10)}`;
+  let activeCharts = [];
 
-  // Time series
-  const tsDatasets = ssids.flatMap((ssid, i) => {
-    const rows = D.time_series.filter(r => r.ssid === ssid);
-    const lbs  = rows.map(r => r.timestamp.slice(5,16).replace('T',' '));
-    const c = COLORS[i % COLORS.length];
-    return [
-      { label:`${ssid} \u2193`, data:rows.map((r,j) => ({x:lbs[j], y:r.download_mbps})),
-        borderColor:c, backgroundColor:'transparent', tension:.3, pointRadius:4, borderWidth:2 },
-      { label:`${ssid} \u2191`, data:rows.map((r,j) => ({x:lbs[j], y:r.upload_mbps})),
-        borderColor:c, backgroundColor:'transparent', tension:.3, pointRadius:4,
-        borderWidth:2, borderDash:[5,3] },
-    ];
-  });
-  new Chart(document.getElementById('tsChart'), {
-    type:'line', data:{datasets:tsDatasets},
-    options:{ responsive:true, interaction:{mode:'index',intersect:false},
-      scales:{ x:{type:'category',ticks:{maxRotation:45,font:{size:10}}},
-               y:{title:{display:true,text:'Mbps'}} },
-      plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
-  });
+  function destroyCharts() {
+    activeCharts.forEach(c => c.destroy());
+    activeCharts = [];
+  }
 
-  // Bar avg
-  new Chart(document.getElementById('barChart'), {
-    type:'bar',
-    data:{ labels:['Download','Upload'],
-      datasets: ssids.map((ssid,i) => ({
-        label:ssid,
-        data:[D.stats[ssid].download_mbps.avg, D.stats[ssid].upload_mbps.avg],
-        backgroundColor:COLORS_A[i%COLORS.length],
-        borderColor:COLORS[i%COLORS.length],
-        borderWidth:2, borderRadius:6,
-      }))
-    },
-    options:{ responsive:true,
-      scales:{ y:{beginAtZero:true,title:{display:true,text:'Mbps'}} },
-      plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
-  });
+  function corrCellColor(v) {
+    if (v > 0) return `rgba(99,102,241,${(v * 0.85).toFixed(2)})`;
+    return `rgba(239,68,68,${(-v * 0.85).toFixed(2)})`;
+  }
 
-  // Scatter RSSI vs Download
-  new Chart(document.getElementById('scatterChart'), {
-    type:'scatter',
-    data:{ datasets: ssids.map((ssid,i) => ({
-        label:ssid,
-        data: D.time_series.filter(r=>r.ssid===ssid).map(r=>({x:r.rssi,y:r.download_mbps})),
-        backgroundColor:COLORS[i%COLORS.length],
-        pointRadius:6, pointHoverRadius:8,
-      }))
-    },
-    options:{ responsive:true,
-      scales:{ x:{title:{display:true,text:'RSSI (dBm)'}},
-               y:{title:{display:true,text:'Download Mbps'}} },
-      plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
-  });
+  // ── ホーム画面 ─────────────────────────────────────────────────────────────
+  function showHome() {
+    destroyCharts();
+    document.getElementById('view-home').style.display = '';
+    document.getElementById('view-detail').style.display = 'none';
+    document.getElementById('back-btn').style.display = 'none';
+    document.getElementById('meta').textContent = `${D.runs.length} 件の計測実行`;
 
-  // Ping bar
-  new Chart(document.getElementById('pingChart'), {
-    type:'bar',
-    data:{ labels:ssids,
-      datasets:[{
-        label:'avg Ping',
-        data: ssids.map(s => D.stats[s].ping_ms.avg),
-        backgroundColor: ssids.map((_,i) => COLORS_A[i%COLORS.length]),
-        borderColor: ssids.map((_,i) => COLORS[i%COLORS.length]),
-        borderWidth:2, borderRadius:6,
-      }]
-    },
-    options:{ responsive:true,
-      scales:{ y:{beginAtZero:true,title:{display:true,text:'ms'}} },
-      plugins:{ legend:{display:false} } }
-  });
+    const grid = document.getElementById('run-grid');
+    grid.innerHTML = D.runs.map((run, i) => {
+      const startStr = run.period.start.slice(0, 16).replace('T', ' ');
+      const endStr   = run.period.end.slice(0, 16).replace('T', ' ');
+      const ssidTags = run.ssids.map(s => `<span class="ssid-tag">${s}</span>`).join('');
+      return `<div class="run-card" onclick="showRun(${i})">
+        <div class="run-id-label">${run.run_id}</div>
+        <div class="run-period">${startStr} 〜 ${endStr}</div>
+        <div class="ssid-tags">${ssidTags}</div>
+        <div class="run-count">${run.total_records} records &middot; ${run.ssids.length} SSID(s)</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── 実行別詳細 ─────────────────────────────────────────────────────────────
+  function showRun(idx) {
+    destroyCharts();
+    const run   = D.runs[idx];
+    const ssids = run.ssids;
+
+    document.getElementById('view-home').style.display = 'none';
+    document.getElementById('view-detail').style.display = '';
+    document.getElementById('back-btn').style.display = '';
+    document.getElementById('detail-run-id').textContent = run.run_id;
+    document.getElementById('meta').textContent =
+      `${run.total_records} records \u00b7 ${run.period.start.slice(0,10)} \u2192 ${run.period.end.slice(0,10)}`;
+
+    // KPI cards
+    document.getElementById('kpi-row').innerHTML = ssids.map((ssid, i) => {
+      const c = COLORS[i % COLORS.length];
+      const s = run.stats[ssid];
+      return `<div class="card kpi-card" style="border-top:4px solid ${c}">
+        <div class="kpi-ssid" style="color:${c}">${ssid}</div>
+        <div class="kpi-band">${s.band} &middot; ${s.count} samples</div>
+        <div class="kpi-grid">
+          <div class="kpi-item"><div class="kpi-val">${s.download_mbps.avg}</div><div class="kpi-label">\u2193 Mbps</div></div>
+          <div class="kpi-item"><div class="kpi-val">${s.upload_mbps.avg}</div><div class="kpi-label">\u2191 Mbps</div></div>
+          <div class="kpi-item"><div class="kpi-val">${s.ping_ms.avg}</div><div class="kpi-label">Ping ms</div></div>
+          <div class="kpi-item"><div class="kpi-val">${s.rssi.avg}</div><div class="kpi-label">RSSI dBm</div></div>
+        </div></div>`;
+    }).join('');
+
+    // 時系列チャート
+    const tsDatasets = ssids.flatMap((ssid, i) => {
+      const rows = run.time_series.filter(r => r.ssid === ssid);
+      const lbs  = rows.map(r => r.timestamp.slice(5,16).replace('T',' '));
+      const c = COLORS[i % COLORS.length];
+      return [
+        { label:`${ssid} \u2193`, data:rows.map((r,j)=>({x:lbs[j],y:r.download_mbps})),
+          borderColor:c, backgroundColor:'transparent', tension:.3, pointRadius:4, borderWidth:2 },
+        { label:`${ssid} \u2191`, data:rows.map((r,j)=>({x:lbs[j],y:r.upload_mbps})),
+          borderColor:c, backgroundColor:'transparent', tension:.3, pointRadius:4,
+          borderWidth:2, borderDash:[5,3] },
+      ];
+    });
+    activeCharts.push(new Chart(document.getElementById('tsChart'), {
+      type:'line', data:{datasets:tsDatasets},
+      options:{ responsive:true, interaction:{mode:'index',intersect:false},
+        scales:{ x:{type:'category',ticks:{maxRotation:45,font:{size:10}}},
+                 y:{title:{display:true,text:'Mbps'}} },
+        plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
+    }));
+
+    // SSID別平均棒グラフ
+    activeCharts.push(new Chart(document.getElementById('barChart'), {
+      type:'bar',
+      data:{ labels:['Download','Upload'],
+        datasets: ssids.map((ssid,i) => ({
+          label:ssid,
+          data:[run.stats[ssid].download_mbps.avg, run.stats[ssid].upload_mbps.avg],
+          backgroundColor:COLORS_A[i%COLORS.length],
+          borderColor:COLORS[i%COLORS.length],
+          borderWidth:2, borderRadius:6,
+        }))
+      },
+      options:{ responsive:true,
+        scales:{ y:{beginAtZero:true,title:{display:true,text:'Mbps'}} },
+        plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
+    }));
+
+    // RSSI vs Download 散布図
+    activeCharts.push(new Chart(document.getElementById('scatterChart'), {
+      type:'scatter',
+      data:{ datasets: ssids.map((ssid,i) => ({
+          label:ssid,
+          data: run.time_series.filter(r=>r.ssid===ssid).map(r=>({x:r.rssi,y:r.download_mbps})),
+          backgroundColor:COLORS[i%COLORS.length],
+          pointRadius:6, pointHoverRadius:8,
+        }))
+      },
+      options:{ responsive:true,
+        scales:{ x:{title:{display:true,text:'RSSI (dBm)'}},
+                 y:{title:{display:true,text:'Download Mbps'}} },
+        plugins:{ legend:{labels:{boxWidth:12,font:{size:11}}} } }
+    }));
+
+    // Ping 棒グラフ
+    activeCharts.push(new Chart(document.getElementById('pingChart'), {
+      type:'bar',
+      data:{ labels:ssids,
+        datasets:[{
+          label:'avg Ping',
+          data: ssids.map(s => run.stats[s].ping_ms.avg),
+          backgroundColor: ssids.map((_,i) => COLORS_A[i%COLORS.length]),
+          borderColor: ssids.map((_,i) => COLORS[i%COLORS.length]),
+          borderWidth:2, borderRadius:6,
+        }]
+      },
+      options:{ responsive:true,
+        scales:{ y:{beginAtZero:true,title:{display:true,text:'ms'}} },
+        plugins:{ legend:{display:false} } }
+    }));
+
+    // 相関テーブル
+    const corr = run.correlation;
+    const shortLabels = ['DL','UL','Ping','RSSI','Noise','MCS'];
+    let corrHtml = `<table class="corr"><thead><tr><th></th>${
+      shortLabels.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>`;
+    corr.matrix.forEach((row, ri) => {
+      const cells = row.map(v => {
+        const bg = corrCellColor(v);
+        const fg = Math.abs(v) > 0.6 ? '#fff' : '#1e293b';
+        return `<td style="background:${bg};color:${fg}">${v.toFixed(2)}</td>`;
+      }).join('');
+      corrHtml += `<tr><th>${shortLabels[ri]}</th>${cells}</tr>`;
+    });
+    corrHtml += '</tbody></table>';
+    document.getElementById('corr-table').innerHTML = corrHtml;
+  }
+
+  window.showRun  = showRun;
+  window.showHome = showHome;
+
+  showHome();
 })();
 """
     js = (
@@ -522,7 +650,16 @@ def export_dashboard(data: dict, out_dir: Path) -> None:
         .replace("/*@COLORS_A@*/null", colors_a_json)
     )
 
-    # ── 組み立て ──────────────────────────────────────────────────────────────
+    # ── HTML 組み立て ──────────────────────────────────────────────────────────
+    wifi_icon = (
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1"'
+        ' stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M5 12.55a11 11 0 0 1 14.08 0"/>'
+        '<path d="M1.42 9a16 16 0 0 1 21.16 0"/>'
+        '<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>'
+        '<circle cx="12" cy="20" r="1"/></svg>'
+    )
+
     html = (
         '<!DOCTYPE html><html lang="ja"><head>'
         '<meta charset="UTF-8">'
@@ -530,17 +667,26 @@ def export_dashboard(data: dict, out_dir: Path) -> None:
         "<title>Wi-Fi Benchmark Dashboard</title>"
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4/dist/chart.umd.min.js"></script>'
         f"<style>{css}</style></head><body>"
+        # ── ヘッダー ───────────────────────────────────────────────────────
         "<header>"
-        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1"'
-        ' stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
-        '<path d="M5 12.55a11 11 0 0 1 14.08 0"/>'
-        '<path d="M1.42 9a16 16 0 0 1 21.16 0"/>'
-        '<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>'
-        '<circle cx="12" cy="20" r="1"/></svg>'
+        f"{wifi_icon}"
         "<h1>Wi-Fi Benchmark Dashboard</h1>"
+        '<button class="back-btn" id="back-btn" onclick="showHome()">← 一覧に戻る</button>'
         '<div class="meta" id="meta"></div></header>'
-        '<div class="container">'
-        f'<div class="kpi-row">{kpi_cards_html}</div>'
+        # ── ホーム画面 ─────────────────────────────────────────────────────
+        '<div id="view-home" class="container">'
+        '<div class="section-title">計測実行 一覧（新しい順）</div>'
+        '<div id="run-grid" class="run-grid"></div>'
+        "</div>"
+        # ── 詳細画面 ───────────────────────────────────────────────────────
+        '<div id="view-detail" class="container" style="display:none">'
+        '<div style="margin-bottom:4px">'
+        '<span style="font-size:11px;color:#94a3b8;text-transform:uppercase;'
+        'letter-spacing:.06em">実行ID &nbsp;</span>'
+        '<span id="detail-run-id" style="font-size:15px;font-weight:700;color:#6366f1;'
+        'font-family:ui-monospace,monospace"></span>'
+        "</div>"
+        '<div id="kpi-row" class="kpi-row"></div>'
         '<div class="card">'
         '<div class="card-title">\u6642\u7cfb\u5217 \u2015 Download / Upload (Mbps)</div>'
         '<canvas id="tsChart"></canvas></div>'
@@ -553,8 +699,7 @@ def export_dashboard(data: dict, out_dir: Path) -> None:
         '<div class="card"><div class="card-title">Ping \u5e73\u5747 (ms)</div>'
         '<canvas id="pingChart"></canvas></div>'
         '<div class="card"><div class="card-title">\u30e1\u30c8\u30ea\u30af\u30b9\u76f8\u95a2</div>'
-        f'<table class="corr"><thead><tr><th></th>{corr_header}</tr></thead>'
-        f"<tbody>{corr_rows_html}</tbody></table></div></div>"
+        '<div id="corr-table"></div></div></div>'
         "</div>"
         f"<script>{js}</script>"
         "</body></html>"

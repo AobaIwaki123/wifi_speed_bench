@@ -97,13 +97,16 @@ def run_speedtest():
     }
 
 
-def build_record(ssid, physical_metrics, speed_metrics):
-    return {
+def build_record(ssid, physical_metrics, speed_metrics, run_id=None):
+    record = {
         "timestamp": datetime.now(JST).isoformat(),
         "ssid": ssid,
         **physical_metrics,
         **speed_metrics,
     }
+    if run_id is not None:
+        record["run_id"] = run_id
+    return record
 
 
 def append_log(record, log_path):
@@ -139,6 +142,9 @@ def main():
     args = parse_args()
     log_path = DEFAULT_LOG_PATH
 
+    run_id = datetime.now(JST).strftime("RUN_%Y%m%d_%H%M%S")
+    print(f"[実行ID] {run_id}")
+
     total = len(args.ssids) * args.count
     done = 0
 
@@ -164,7 +170,7 @@ def main():
             try:
                 physical = get_physical_metrics()
                 speed = run_speedtest()
-                record = build_record(ssid, physical, speed)
+                record = build_record(ssid, physical, speed, run_id=run_id)
                 append_log(record, log_path)
                 print(
                     f"  RSSI:{physical['rssi']} dBm  "
