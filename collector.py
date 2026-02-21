@@ -12,10 +12,7 @@ import speedtest as speedtest_module
 DEFAULT_COUNT = 3
 DEFAULT_INTERVAL = 10
 JST = timezone(timedelta(hours=9))
-AIRPORT_CMD = (
-    "/System/Library/PrivateFrameworks/Apple80211.framework"
-    "/Versions/Current/Resources/airport"
-)
+AIRPORT_CMD = ["system_profiler", "SPAirPortDataType"]
 
 
 def parse_args(argv=None):
@@ -53,20 +50,21 @@ def get_current_ssid(interface="en0"):
 def get_physical_metrics():
     import re
 
-    result = subprocess.run([AIRPORT_CMD, "-I"], capture_output=True, text=True)
+    result = subprocess.run(AIRPORT_CMD, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"airport command failed: {result.stdout.strip()}")
+        raise RuntimeError(f"system_profiler failed: {result.stdout.strip()}")
     output = result.stdout
 
-    def _parse(pattern):
+    def _parse_int(pattern):
         m = re.search(pattern, output)
         return int(m.group(1)) if m else None
 
-    return {
-        "rssi": _parse(r"agrCtlRSSI:\s*(-?\d+)"),
-        "noise": _parse(r"agrCtlNoise:\s*(-?\d+)"),
-        "mcs_index": _parse(r"\bMCS:\s*(\d+)"),
-    }
+    # Signal / Noise: -57 dBm / -101 dBm
+    rssi  = _parse_int(r"Signal / Noise:\s*(-?\d+)\s*dBm")
+    noise = _parse_int(r"Signal / Noise:\s*-?\d+\s*dBm\s*/\s*(-?\d+)\s*dBm")
+    mcs   = _parse_int(r"MCS Index:\s*(\d+)")
+
+    return {"rssi": rssi, "noise": noise, "mcs_index": mcs}
 
 
 def run_speedtest():
@@ -140,9 +138,9 @@ def main():
             print(f"[{ssid}  {i}/{args.count}] 計測中... ({done}/{total})")
             try:
                 physical = get_physical_metrics()
-                speed    = run_speedtest()
+                speed = run_speedtest()
                 actual_ssid = get_current_ssid()
-                record   = build_record(actual_ssid, physical, speed)
+                record = build_record(actual_ssid, physical, speed)
                 append_log(record, log_path)
                 print(
                     f"  RSSI:{physical['rssi']} dBm  "

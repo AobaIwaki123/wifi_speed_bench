@@ -18,23 +18,20 @@
 
 ### 正常系
 
-`airport -I` の出力サンプル（モック用）:
+`system_profiler SPAirPortDataType` の出力サンプル（モック用）:
 ```
-     agrCtlRSSI: -55
-     agrExtRSSI: 0
-    agrCtlNoise: -95
-    agrExtNoise: 0
-          state: running
-        op mode: station
-     lastTxRate: 780
-        maxRate: 780
-lastAssocStatus: 0
-    802.11 auth: open
-      link auth: wpa2-psk
-          BSSID: xx:xx:xx:xx:xx:xx
-           SSID: MyNet_5GHz
-            MCS: 9
-        channel: 100,80
+Wi-Fi:
+
+      Interfaces:
+        en0:
+          Status: Connected
+          Current Network Information:
+            MyNet_5GHz:
+              PHY Mode: 802.11ax
+              Channel: 100 (5GHz, 80MHz)
+              Signal / Noise: -55 dBm / -95 dBm
+              Transmit Rate: 780
+              MCS Index: 9
 ```
 
 | #   | テスト関数名                                      | 期待結果                                              |
@@ -55,8 +52,10 @@ lastAssocStatus: 0
 
 ## 使用コマンド
 ```bash
-/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I
+system_profiler SPAirPortDataType
 ```
+
+> **Note**: macOS 15以降で `airport` コマンドが廃止されたため `system_profiler` を使用する。
 
 ## 備考
 - `subprocess` をモック化してOS依存を排除すること

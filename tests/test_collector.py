@@ -76,26 +76,28 @@ class TestGetCurrentSsid:
 # ---------------------------------------------------------------------------
 
 AIRPORT_OUTPUT = """\
-     agrCtlRSSI: -55
-     agrExtRSSI: 0
-    agrCtlNoise: -95
-    agrExtNoise: 0
-          state: running
-        op mode: station
-     lastTxRate: 780
-        maxRate: 780
-lastAssocStatus: 0
-    802.11 auth: open
-      link auth: wpa2-psk
-          BSSID: xx:xx:xx:xx:xx:xx
-           SSID: MyNet_5GHz
-            MCS: 9
-        channel: 100,80
+Wi-Fi:
+
+      Interfaces:
+        en0:
+          Status: Connected
+          Current Network Information:
+            MyNet_5GHz:
+              PHY Mode: 802.11ax
+              Channel: 100 (5GHz, 80MHz)
+              Signal / Noise: -55 dBm / -95 dBm
+              Transmit Rate: 780
+              MCS Index: 9
 """
 
 AIRPORT_OUTPUT_NO_MCS = """\
-     agrCtlRSSI: -55
-    agrCtlNoise: -95
+Wi-Fi:
+
+      Interfaces:
+        en0:
+          Current Network Information:
+            MyNet_5GHz:
+              Signal / Noise: -55 dBm / -95 dBm
 """
 
 
