@@ -20,14 +20,15 @@
 ## CLIインターフェース
 
 ```bash
-python collector.py --ssids <SSID1> [SSID2 ...] [--count N] [--interval SEC]
+python collector.py --ssids <SSID1> [SSID2 ...] [--count N] [--interval SEC] [--passwords [PW1 ...]]
 ```
 
-| 引数         | 型              | デフォルト | 説明                         |
-| ------------ | --------------- | ---------- | ---------------------------- |
-| `--ssids`    | `str` (1つ以上) | 必須       | 計測対象のSSIDリスト         |
-| `--count`    | `int`           | `3`        | 1SSIDあたりの計測回数        |
-| `--interval` | `int`           | `10`       | SSID切り替え後の安定待機秒数 |
+| 引数          | 型              | デフォルト | 説明                                                                       |
+| ------------- | --------------- | ---------- | -------------------------------------------------------------------------- |
+| `--ssids`     | `str` (1つ以上) | 必須       | 計測対象のSSIDリスト                                                       |
+| `--count`     | `int`           | `3`        | 1SSIDあたりの計測回数                                                      |
+| `--interval`  | `int`           | `10`       | SSID切り替え後の安定待機秒数                                               |
+| `--passwords` | `str` (0つ以上) | `[]`       | SSIDに対応するパスワードリスト（`--ssids` と同順。不足分は最後の値を複製） |
 
 ---
 
@@ -61,5 +62,15 @@ python collector.py --ssids <SSID1> [SSID2 ...] [--count N] [--interval SEC]
 # 実行例
 
 ```bash
+# パスワードなし（オープンネットワーク）
 python collector.py --ssids ShareHaimu-2.4G-iii ShareHaimu-5G-iii --count 5 --interval 20
+
+# 全SSIDで同じパスワードを使用（1つ指定すれば全SSIDに複製される）
+python collector.py --ssids ShareHaimu-2.4G-iii ShareHaimu-5G-iii --count 5 --interval 20 --passwords mypassword
+
+# SSIDごとに異なるパスワードを指定
+python collector.py --ssids ShareHaimu-2.4G-iii ShareHaimu-5G-iii --count 5 --interval 20 --passwords pass_2g pass_5g
+
+# 一部のSSIDにのみパスワードを指定（不足分は最後の値を複製）
+python collector.py --ssids SSID_A SSID_B SSID_C --count 3 --passwords pass_a pass_bc
 ```

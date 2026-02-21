@@ -29,6 +29,12 @@ def parse_args(argv=None):
         default=DEFAULT_INTERVAL,
         help="SSID切り替え後の安定待機秒数",
     )
+    parser.add_argument(
+        "--passwords",
+        nargs="*",
+        default=[],
+        help='SSIDに対応するパスワードリスト（--ssidsと同順。不要なSSIDは空文字列 "" を指定）',
+    )
     return parser.parse_args(argv)
 
 
@@ -107,10 +113,13 @@ def append_log(record, log_path):
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def switch_ssid(ssid, interface="en0", wait_sec=DEFAULT_INTERVAL):
+def switch_ssid(ssid, password=None, interface="en0", wait_sec=DEFAULT_INTERVAL):
+    cmd = ["networksetup", "-setairportnetwork", interface, ssid]
+    if password:
+        cmd.append(password)
     try:
         result = subprocess.run(
-            ["networksetup", "-setairportnetwork", interface, ssid],
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -133,10 +142,18 @@ def main():
     total = len(args.ssids) * args.count
     done = 0
 
-    for ssid in args.ssids:
+    # SSIDと同数になるようにパスワードリストを補完（不足分は最後のパスワードを複製）
+    pw_list = list(args.passwords)
+    if pw_list and len(pw_list) < len(args.ssids):
+        pw_list += [pw_list[-1]] * (len(args.ssids) - len(pw_list))
+    else:
+        pw_list += [None] * (len(args.ssids) - len(pw_list))
+    passwords = pw_list
+
+    for ssid, password in zip(args.ssids, passwords):
         print(f"\n[→] Switching to SSID: {ssid}")
         try:
-            switch_ssid(ssid, wait_sec=args.interval)
+            switch_ssid(ssid, password=password or None, wait_sec=args.interval)
         except RuntimeError as e:
             print(f"[ERROR] SSID切り替え失敗、スキップします: {e}")
             continue
