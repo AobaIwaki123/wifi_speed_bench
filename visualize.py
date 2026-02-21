@@ -20,6 +20,9 @@ import json
 import sys
 from datetime import timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+_JST = ZoneInfo("Asia/Tokyo")
 
 import matplotlib
 import matplotlib.dates as mdates
@@ -74,7 +77,7 @@ def load_log(log_path: Path) -> pd.DataFrame:
         sys.exit(1)
 
     df = pd.DataFrame(records)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert(_JST)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     # run_id が無い（旧形式）レコードに合成 run_id を付与する
@@ -136,7 +139,7 @@ def plot_time_series(df: pd.DataFrame, out_dir: Path) -> None:
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(fontsize=8, loc="upper right")
 
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d\n%H:%M"))
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d\n%H:%M", tz=_JST))
     axes[-1].xaxis.set_major_locator(mdates.AutoDateLocator())
     fig.autofmt_xdate(rotation=0, ha="center")
 
