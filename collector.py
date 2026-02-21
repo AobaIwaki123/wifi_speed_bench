@@ -68,7 +68,19 @@ def get_physical_metrics():
 
 
 def run_speedtest():
-    pass
+    try:
+        st = speedtest_module.Speedtest()
+        st.get_best_server()
+        st.download()
+        st.upload()
+        result = st.results.dict()
+    except Exception as e:
+        raise RuntimeError(f"speedtest failed: {e}") from e
+    return {
+        "download_mbps": round(result["download"] / 1_000_000, 1),
+        "upload_mbps":   round(result["upload"]   / 1_000_000, 1),
+        "ping_ms":       result["ping"],
+    }
 
 
 def build_record(ssid, physical_metrics, speed_metrics):
