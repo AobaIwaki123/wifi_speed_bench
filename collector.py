@@ -49,7 +49,10 @@ def build_record(ssid, physical_metrics, speed_metrics):
 
 
 def append_log(record, log_path):
-    pass
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def switch_ssid(ssid, interface="en0", wait_sec=0):
