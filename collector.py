@@ -32,21 +32,6 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def get_current_ssid(interface="en0"):
-    result = subprocess.run(
-        ["networksetup", "-getairportnetwork", interface],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"networksetup failed: {result.stdout.strip()}")
-    output = result.stdout.strip()
-    prefix = "Current Wi-Fi Network: "
-    if not output.startswith(prefix):
-        raise RuntimeError(f"Not associated with any network: {output}")
-    return output[len(prefix) :]
-
-
 def get_physical_metrics():
     import re
 
@@ -64,7 +49,16 @@ def get_physical_metrics():
     noise = _parse_int(r"Signal / Noise:\s*-?\d+\s*dBm\s*/\s*(-?\d+)\s*dBm")
     mcs   = _parse_int(r"MCS Index:\s*(\d+)")
 
-    return {"rssi": rssi, "noise": noise, "mcs_index": mcs}
+    # Channel: 140 (5GHz, 20MHz)
+    ch_m = re.search(r"Channel:\s*(\d+)\s*\(([^,)]+)", output)
+    channel = int(ch_m.group(1)) if ch_m else None
+    if ch_m:
+        freq = ch_m.group(2)  # "5GHz" / "2GHz" / "6GHz"
+        band = "6GHz" if "6GHz" in freq else "5GHz" if "5GHz" in freq else "2.4GHz" if "2GHz" in freq else None
+    else:
+        band = None
+
+    return {"rssi": rssi, "noise": noise, "mcs_index": mcs, "channel": channel, "band": band}
 
 
 def run_speedtest():
@@ -139,11 +133,11 @@ def main():
             try:
                 physical = get_physical_metrics()
                 speed = run_speedtest()
-                actual_ssid = get_current_ssid()
-                record = build_record(actual_ssid, physical, speed)
+                record = build_record(ssid, physical, speed)
                 append_log(record, log_path)
                 print(
                     f"  RSSI:{physical['rssi']} dBm  "
+                    f"CH:{physical['channel']}({physical['band']})  "
                     f"MCS:{physical['mcs_index']}  "
                     f"↓{speed['download_mbps']} Mbps  "
                     f"↑{speed['upload_mbps']} Mbps  "

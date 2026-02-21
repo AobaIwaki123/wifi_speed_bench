@@ -42,36 +42,6 @@ class TestParseArgs:
 
 
 # ---------------------------------------------------------------------------
-# get_current_ssid
-# ---------------------------------------------------------------------------
-
-
-class TestGetCurrentSsid:
-    def test_get_current_ssid_returns_string(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Current Wi-Fi Network: MyNet_5GHz\n"
-        with patch("subprocess.run", return_value=mock_result):
-            assert collector.get_current_ssid() == "MyNet_5GHz"
-
-    def test_get_current_ssid_when_disconnected_raises_error(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "You are not associated with an AirPort network.\n"
-        with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError):
-                collector.get_current_ssid()
-
-    def test_get_current_ssid_when_command_fails(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError):
-                collector.get_current_ssid()
-
-
-# ---------------------------------------------------------------------------
 # get_physical_metrics
 # ---------------------------------------------------------------------------
 
@@ -111,7 +81,7 @@ class TestGetPhysicalMetrics:
     def test_get_physical_metrics_returns_expected_keys(self):
         with patch("subprocess.run", return_value=self._mock_airport(AIRPORT_OUTPUT)):
             result = collector.get_physical_metrics()
-        assert {"rssi", "noise", "mcs_index"} <= result.keys()
+        assert {"rssi", "noise", "mcs_index", "channel", "band"} <= result.keys()
 
     def test_get_physical_metrics_parses_rssi(self):
         with patch("subprocess.run", return_value=self._mock_airport(AIRPORT_OUTPUT)):
@@ -128,6 +98,16 @@ class TestGetPhysicalMetrics:
             result = collector.get_physical_metrics()
         assert result["mcs_index"] == 9
 
+    def test_get_physical_metrics_parses_channel(self):
+        with patch("subprocess.run", return_value=self._mock_airport(AIRPORT_OUTPUT)):
+            result = collector.get_physical_metrics()
+        assert result["channel"] == 100
+
+    def test_get_physical_metrics_parses_band(self):
+        with patch("subprocess.run", return_value=self._mock_airport(AIRPORT_OUTPUT)):
+            result = collector.get_physical_metrics()
+        assert result["band"] == "5GHz"
+
     def test_get_physical_metrics_when_command_fails(self):
         with patch("subprocess.run", return_value=self._mock_airport("", returncode=1)):
             with pytest.raises(RuntimeError):
@@ -139,6 +119,8 @@ class TestGetPhysicalMetrics:
         ):
             result = collector.get_physical_metrics()
         assert result["mcs_index"] is None
+        assert result["channel"] is None
+        assert result["band"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +169,7 @@ class TestRunSpeedtest:
 # build_record
 # ---------------------------------------------------------------------------
 
-PHYSICAL = {"rssi": -55, "noise": -95, "mcs_index": 9}
+PHYSICAL = {"rssi": -55, "noise": -95, "mcs_index": 9, "channel": 100, "band": "5GHz"}
 SPEED = {"download_mbps": 412.3, "upload_mbps": 89.1, "ping_ms": 12.4}
 REQUIRED_FIELDS = {
     "timestamp",
@@ -195,6 +177,8 @@ REQUIRED_FIELDS = {
     "rssi",
     "noise",
     "mcs_index",
+    "channel",
+    "band",
     "download_mbps",
     "upload_mbps",
     "ping_ms",
@@ -219,6 +203,8 @@ class TestBuildRecord:
         assert record["rssi"] == -55
         assert record["noise"] == -95
         assert record["mcs_index"] == 9
+        assert record["channel"] == 100
+        assert record["band"] == "5GHz"
         assert record["download_mbps"] == 412.3
         assert record["upload_mbps"] == 89.1
         assert record["ping_ms"] == 12.4
