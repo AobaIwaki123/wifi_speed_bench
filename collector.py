@@ -45,7 +45,12 @@ def run_speedtest():
 
 
 def build_record(ssid, physical_metrics, speed_metrics):
-    pass
+    return {
+        "timestamp": datetime.now(JST).isoformat(),
+        "ssid": ssid,
+        **physical_metrics,
+        **speed_metrics,
+    }
 
 
 def append_log(record, log_path):
