@@ -33,7 +33,17 @@ def parse_args(argv=None):
 
 
 def get_current_ssid(interface="en0"):
-    pass
+    result = subprocess.run(
+        ["networksetup", "-getairportnetwork", interface],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"networksetup failed: {result.stdout.strip()}")
+    output = result.stdout.strip()
+    prefix = "Current Wi-Fi Network: "
+    if not output.startswith(prefix):
+        raise RuntimeError(f"Not associated with any network: {output}")
+    return output[len(prefix):]
 
 
 def get_physical_metrics():
